@@ -7,11 +7,14 @@ extern crate mio;
 
 //use mio;
 //use mio::tcp;
+use mio::TryWrite;
+use mio::TryRead;
 
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::io;
 use std::net::SocketAddr;
+
 
 // Talks to the session via the event loop and the channel
 // Lives in the main/test thread.
@@ -33,7 +36,7 @@ pub struct Session {
 pub enum Command {
     Connect(SocketAddr),
     Listen(SocketAddr),
-    Send,
+    Send(Vec<u8>),
     Recv,
     Shutdown
 }
@@ -98,6 +101,10 @@ impl Controller {
     pub fn connect(&self, addr: SocketAddr) -> Result<(), io::Error> {
         self.send_cmd(Command::Connect(addr)).and_then(|_| self.recv_evt())
     }
+
+    pub fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
+        self.send_cmd(Command::Send(msg)).and_then(|_| self.recv_evt())
+    }
 }
 
 impl Drop for Controller {
@@ -139,6 +146,8 @@ impl Session {
         self.clients.insert(token, client);
 
         self.send_ok_event();
+
+        info!("Client/Server setup: client sender is {:?}", token);
     }
 
     fn listen(&mut self, event_loop: &mut mio::EventLoop<Session>, addr: SocketAddr) {
@@ -170,7 +179,19 @@ impl Session {
 
         self.send_ok_event();
 
-        info!("Client/Server link is setup: receiver is {:?}", client_tok);
+        info!("Client/Server setup: server receiver is {:?}", client_tok);
+    }
+
+    fn get_client<'a>(&'a mut self, tok: &mio::Token) -> Option<&'a mut Client> {
+        self.clients.get_mut(tok)
+    }
+
+    fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
+        let sender_tok = mio::Token(2);
+
+        self.get_client(&sender_tok).map(|c| c.send(event_loop, msg));
+
+        self.send_ok_event();
     }
 }
 
@@ -197,7 +218,8 @@ impl mio::Handler for Session {
         match cmd {
             Command::Shutdown => event_loop.shutdown(),
             Command::Connect(addr) => self.connect(event_loop, addr),
-            Command::Listen(addr) => self.listen(event_loop, addr),
+            Command::Listen(addr)  => self.listen(event_loop, addr),
+            Command::Send(msg)     => self.send(event_loop, msg),
             _ => {}
         }
     }
@@ -245,6 +267,10 @@ impl Client {
 
     fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
     }
+
+    fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
+        self.stream.send(event_loop, msg);
+    }
 }
 
 impl ProtoStream {
@@ -268,6 +294,24 @@ impl ProtoStream {
 
         event_loop.register(&self.stream, self.token, interest, poll_opt).unwrap();
     }
+
+    fn reregister(&self, event_loop: &mut mio::EventLoop<Session>) {
+        let interest = mio::EventSet::all();
+        let poll_opt = mio::PollOpt::edge();
+
+        event_loop.reregister(&self.stream, self.token, interest, poll_opt).unwrap();
+    }
+
+    fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
+        match self.stream.try_write(&msg) {
+            Ok(Some(0))     => info!("send: wrote {} bytes", 0),
+            Ok(Some(count)) => info!("send: wrote {} bytes", count),
+            Ok(None)        => info!("send: would block"),
+            Err(e)          => info!("send: failed {:?}", e)
+        }
+
+        self.reregister(event_loop);
+    }
 }
 
 #[cfg(test)]
@@ -283,9 +327,14 @@ mod test {
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::thread;
+    use std::time;
 
     fn localhost() -> SocketAddr {
         FromStr::from_str("127.0.0.1:18080").unwrap()
+    }
+
+    fn sleep_ms(millis: u64) {
+        thread::sleep(time::Duration::from_millis(millis))
     }
 
     #[test]
@@ -302,6 +351,11 @@ mod test {
 
         ctrl.listen(addr).unwrap();
         ctrl.connect(addr).unwrap();
+
+        sleep_ms(250); // wait for the connection to establish
+
+        ctrl.send(vec![66; 11]).unwrap();
+        ctrl.send(vec![66; 11]).unwrap();
 
         drop(ctrl);
         el_thread.join().unwrap();
