@@ -1,0 +1,23 @@
+[package]
+name = "mio-win-inv"
+version = "0.1.0"
+authors       = ["blabaere <benoit.labaere@gmail.com>"]
+readme        = "README.md"
+documentation = "https://github.com/blabaere/mio-win-inv"
+homepage      = "https://github.com/blabaere/mio-win-inv"
+repository    = "https://github.com/blabaere/mio-win-inv"
+exclude       = [
+  ".gitignore",
+  ".travis.yml",
+  "appveyor.yml",
+  "test/**/*",
+]
+
+[dependencies]
+log = "0.3.3"
+env_logger = "0.3.2"
+byteorder = "0.4.2"
+
+[dependencies.mio]
+git = "https://github.com/carllerche/mio"
+
