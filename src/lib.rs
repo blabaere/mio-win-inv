@@ -29,7 +29,7 @@ pub struct Session {
 
 pub enum Command {
     Connect,
-    Listen,
+    Listen(SocketAddr),
     Send,
     Recv,
     Shutdown
@@ -80,6 +80,10 @@ impl Controller {
             Err(_) => Err(other_io_error("evt channel closed"))
         }
     }
+
+    pub fn listen(&self, addr: SocketAddr) -> Result<(), io::Error> {
+        self.send_cmd(Command::Listen(addr)).and_then(|_| self.recv_evt())
+    }
 }
 
 impl Drop for Controller {
@@ -94,6 +98,19 @@ impl Session {
             evt_sender: evt_tx
         }
     }
+
+    fn send_event(&mut self, evt: io::Result<()>) {
+        let _ = self.evt_sender.send(evt);
+    }
+
+    fn send_ok_event(&mut self) {
+        let evt = Ok(());
+        self.send_event(evt);
+    }
+
+    fn listen(&mut self, addr: SocketAddr) {
+        self.send_ok_event();
+    }
 }
 
 impl mio::Handler for Session {
@@ -105,7 +122,8 @@ impl mio::Handler for Session {
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Session>, cmd: Command) {
         match cmd {
             Command::Shutdown => event_loop.shutdown(),
-            _ => {},
+            Command::Listen(addr) => self.listen(addr),
+            _ => {}
         }
     }
 }
@@ -113,6 +131,10 @@ impl mio::Handler for Session {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    use env_logger;
+
+    use mio;
 
     use std::sync::mpsc;
     use std::io;
@@ -130,6 +152,9 @@ mod test {
         let ctrl = Controller::new(event_loop.channel(), rx);
 
         let el_thread = thread::spawn(move || run_event_loop(&mut event_loop, tx));
+        let addr = FromStr::from_str("127.0.0.1:5449").unwrap();
+
+        ctrl.listen(addr).unwrap();
 
         drop(ctrl);
         el_thread.join().unwrap();
