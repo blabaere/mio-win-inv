@@ -150,6 +150,28 @@ impl Session {
 
         self.send_ok_event();
     }
+
+    fn get_server<'a>(&'a mut self, tok: &mio::Token) -> Option<&'a mut Server> {
+        self.servers.get_mut(tok)
+    }
+
+    fn accept(&mut self, tok: &mio::Token) -> Option<mio::tcp::TcpStream> {
+        self.get_server(tok).map(|s| s.accept().unwrap())
+    }
+
+    fn on_server_ready(&mut self, event_loop: &mut mio::EventLoop<Session>, tok: mio::Token, events: mio::EventSet) {
+        info!("on_server_ready {:?} {:?}", tok, events);
+        let stream = self.accept(&tok).unwrap();
+        let client_tok = self.next_token();
+        let client = Client::accepted(client_tok, stream);
+
+        client.register(event_loop);
+        self.clients.insert(client_tok, client);
+
+        self.send_ok_event();
+
+        info!("Client/Server link is setup: receiver is {:?}", client_tok);
+    }
 }
 
 impl mio::Handler for Session {
@@ -159,13 +181,17 @@ impl mio::Handler for Session {
     fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, tok: mio::Token, events: mio::EventSet) {
         info!("ready {:?} {:?}", tok, events);
 
-        if let Some(server) = self.servers.get_mut(&tok) {
+        if self.servers.contains_key(&tok) {
+            return self.on_server_ready(event_loop, tok, events);
+        }
+
+        /*if let Some(server) = self.servers.get_mut(&tok) {
             return server.ready(event_loop, events);
         }
 
         if let Some(client) = self.clients.get_mut(&tok) {
             return client.ready(event_loop, events);
-        }
+        }*/
     }
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Session>, cmd: Command) {
         match cmd {
@@ -192,7 +218,11 @@ impl Server {
         event_loop.register(&self.listener, self.token, interest, poll_opt).unwrap();
     }
 
-    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
+    fn accept(&mut self) -> io::Result<mio::tcp::TcpStream> {
+        match try!(self.listener.accept()) {
+            Some((stream, _)) => Ok(stream),
+            None              => Err(other_io_error("acceptor ready but would block"))
+        }
     }
 }
 
@@ -200,6 +230,12 @@ impl Client {
     fn new(tok: mio::Token, addr: &SocketAddr) -> Client {
         Client {
             stream: ProtoStream::new(tok, addr)
+        }
+    }
+
+    fn accepted(tok: mio::Token, stream: mio::tcp::TcpStream) -> Client {
+        Client {
+            stream: ProtoStream::accepted(tok, stream)
         }
     }
 
@@ -216,6 +252,13 @@ impl ProtoStream {
         ProtoStream {
             token: tok,
             stream: mio::tcp::TcpStream::connect(addr).unwrap()
+        }
+    }
+
+    fn accepted(tok: mio::Token, stream: mio::tcp::TcpStream) -> ProtoStream {
+        ProtoStream {
+            token: tok,
+            stream: stream
         }
     }
 
