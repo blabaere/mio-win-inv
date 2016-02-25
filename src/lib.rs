@@ -8,10 +8,10 @@ extern crate mio;
 //use mio;
 //use mio::tcp;
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::io;
 use std::net::SocketAddr;
-use std::str::FromStr;
 
 // Talks to the session via the event loop and the channel
 // Lives in the main/test thread.
@@ -20,15 +20,18 @@ pub struct Controller {
     evt_receiver: mpsc::Receiver<io::Result<()>>,
 }
 
-// Receives commands and readyness notifications via the event loop
-// Responsible for dispatching all these, creating and and storing Server and Client
-// Lives in the event loop  thread.
+// Receives commands and readiness notifications via the event loop
+// Responsible for dispatching all these, creating and storing Server and Client
+// Lives in the event loop thread.
 pub struct Session {
-    evt_sender: mpsc::Sender<io::Result<()>>
+    token_generator: usize,
+    evt_sender: mpsc::Sender<io::Result<()>>,
+    servers: HashMap<mio::Token, Server>,
+    clients: HashMap<mio::Token, Client>
 }
 
 pub enum Command {
-    Connect,
+    Connect(SocketAddr),
     Listen(SocketAddr),
     Send,
     Recv,
@@ -37,18 +40,25 @@ pub enum Command {
 
 // wraps a tcp stream, performs handshake, send and recv messages
 // according to its state and received commands.
-struct ProtoStream;
+struct ProtoStream {
+    token: mio::Token,
+    stream: mio::tcp::TcpStream
+}
 
 enum ProtoStreamState {
     Initial
 }
 
-
 // wraps a tcp listener, creates and stores ProtoStream 
-struct Server;
+struct Server {
+    token: mio::Token,
+    listener: mio::tcp::TcpListener
+}
 
 // wraps a ProtoStream
-struct Client;
+struct Client {
+    stream: ProtoStream
+}
 
 pub fn other_io_error(msg: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::Other, msg)
@@ -84,6 +94,10 @@ impl Controller {
     pub fn listen(&self, addr: SocketAddr) -> Result<(), io::Error> {
         self.send_cmd(Command::Listen(addr)).and_then(|_| self.recv_evt())
     }
+
+    pub fn connect(&self, addr: SocketAddr) -> Result<(), io::Error> {
+        self.send_cmd(Command::Connect(addr)).and_then(|_| self.recv_evt())
+    }
 }
 
 impl Drop for Controller {
@@ -95,8 +109,17 @@ impl Drop for Controller {
 impl Session {
     fn new(evt_tx: mpsc::Sender<io::Result<()>>) -> Session {
         Session {
-            evt_sender: evt_tx
+            token_generator: 0,
+            evt_sender: evt_tx,
+            servers: HashMap::new(),
+            clients: HashMap::new()
         }
+    }
+
+    fn next_token(&mut self) -> mio::Token {
+        self.token_generator += 1;
+
+        mio::Token(self.token_generator)
     }
 
     fn send_event(&mut self, evt: io::Result<()>) {
@@ -108,7 +131,23 @@ impl Session {
         self.send_event(evt);
     }
 
-    fn listen(&mut self, addr: SocketAddr) {
+    fn connect(&mut self, event_loop: &mut mio::EventLoop<Session>, addr: SocketAddr) {
+        let token = self.next_token();
+        let client = Client::new(token, &addr);
+
+        client.register(event_loop);
+        self.clients.insert(token, client);
+
+        self.send_ok_event();
+    }
+
+    fn listen(&mut self, event_loop: &mut mio::EventLoop<Session>, addr: SocketAddr) {
+        let token = self.next_token();
+        let server = Server::new(token, &addr);
+
+        server.register(event_loop);
+        self.servers.insert(token, server);
+
         self.send_ok_event();
     }
 }
@@ -117,14 +156,74 @@ impl mio::Handler for Session {
     type Timeout = usize;
     type Message = Command;
 
-    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, token: mio::Token, events: mio::EventSet) {
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, tok: mio::Token, events: mio::EventSet) {
+        info!("ready {:?} {:?}", tok, events);
+
+        if let Some(server) = self.servers.get_mut(&tok) {
+            return server.ready(event_loop, events);
+        }
+
+        if let Some(client) = self.clients.get_mut(&tok) {
+            return client.ready(event_loop, events);
+        }
     }
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Session>, cmd: Command) {
         match cmd {
             Command::Shutdown => event_loop.shutdown(),
-            Command::Listen(addr) => self.listen(addr),
+            Command::Connect(addr) => self.connect(event_loop, addr),
+            Command::Listen(addr) => self.listen(event_loop, addr),
             _ => {}
         }
+    }
+}
+
+impl Server {
+    fn new(tok: mio::Token, addr: &SocketAddr) -> Server {
+        Server {
+            token: tok,
+            listener: mio::tcp::TcpListener::bind(addr).unwrap()
+        }
+    }
+
+    fn register(&self, event_loop: &mut mio::EventLoop<Session>) {
+        let interest = mio::EventSet::readable();
+        let poll_opt = mio::PollOpt::edge();
+
+        event_loop.register(&self.listener, self.token, interest, poll_opt).unwrap();
+    }
+
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
+    }
+}
+
+impl Client {
+    fn new(tok: mio::Token, addr: &SocketAddr) -> Client {
+        Client {
+            stream: ProtoStream::new(tok, addr)
+        }
+    }
+
+    fn register(&self, event_loop: &mut mio::EventLoop<Session>) {
+        self.stream.register(event_loop);
+    }
+
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
+    }
+}
+
+impl ProtoStream {
+    fn new(tok: mio::Token, addr: &SocketAddr) -> ProtoStream {
+        ProtoStream {
+            token: tok,
+            stream: mio::tcp::TcpStream::connect(addr).unwrap()
+        }
+    }
+
+    fn register(&self, event_loop: &mut mio::EventLoop<Session>) {
+        let interest = mio::EventSet::all();
+        let poll_opt = mio::PollOpt::edge();
+
+        event_loop.register(&self.stream, self.token, interest, poll_opt).unwrap();
     }
 }
 
@@ -142,6 +241,10 @@ mod test {
     use std::str::FromStr;
     use std::thread;
 
+    fn localhost() -> SocketAddr {
+        FromStr::from_str("127.0.0.1:18080").unwrap()
+    }
+
     #[test]
     fn it_works() {
         let _ = env_logger::init();
@@ -152,9 +255,10 @@ mod test {
         let ctrl = Controller::new(event_loop.channel(), rx);
 
         let el_thread = thread::spawn(move || run_event_loop(&mut event_loop, tx));
-        let addr = FromStr::from_str("127.0.0.1:5449").unwrap();
+        let addr = localhost();
 
         ctrl.listen(addr).unwrap();
+        ctrl.connect(addr).unwrap();
 
         drop(ctrl);
         el_thread.join().unwrap();
