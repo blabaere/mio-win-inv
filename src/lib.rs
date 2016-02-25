@@ -41,26 +41,26 @@ pub enum Command {
     Shutdown
 }
 
-// wraps a tcp stream, performs handshake, send and recv messages
-// according to its state and received commands.
-struct ProtoStream {
-    token: mio::Token,
-    stream: mio::tcp::TcpStream
-}
-
-enum ProtoStreamState {
-    Initial
-}
-
 // wraps a tcp listener, creates and stores ProtoStream 
 struct Server {
     token: mio::Token,
     listener: mio::tcp::TcpListener
 }
 
-// wraps a ProtoStream
+// wraps a tcp stream, sends and receives messages, according to readiness and commands
 struct Client {
-    stream: ProtoStream
+    token: mio::Token,
+    stream: mio::tcp::TcpStream,
+    evt_sender: mpsc::Sender<io::Result<()>>,
+    state: ClientState
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum ClientState {
+    Initial,
+    Readable,
+    NotReadable,
+    Receiving
 }
 
 pub fn other_io_error(msg: &'static str) -> io::Error {
@@ -105,6 +105,10 @@ impl Controller {
     pub fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
         self.send_cmd(Command::Send(msg)).and_then(|_| self.recv_evt())
     }
+
+    pub fn recv(&self) -> Result<(), io::Error> {
+        self.send_cmd(Command::Recv).and_then(|_| self.recv_evt())
+    }
 }
 
 impl Drop for Controller {
@@ -114,7 +118,7 @@ impl Drop for Controller {
 }
 
 impl Session {
-    fn new(evt_tx: mpsc::Sender<io::Result<()>>) -> Session {
+    pub fn new(evt_tx: mpsc::Sender<io::Result<()>>) -> Session {
         Session {
             token_generator: 0,
             evt_sender: evt_tx,
@@ -140,7 +144,7 @@ impl Session {
 
     fn connect(&mut self, event_loop: &mut mio::EventLoop<Session>, addr: SocketAddr) {
         let token = self.next_token();
-        let client = Client::new(token, &addr);
+        let client = Client::new(token, &addr, self.evt_sender.clone());
 
         client.register(event_loop);
         self.clients.insert(token, client);
@@ -172,12 +176,10 @@ impl Session {
         info!("on_server_ready {:?} {:?}", tok, events);
         let stream = self.accept(&tok).unwrap();
         let client_tok = self.next_token();
-        let client = Client::accepted(client_tok, stream);
+        let client = Client::accepted(client_tok, stream, self.evt_sender.clone());
 
         client.register(event_loop);
         self.clients.insert(client_tok, client);
-
-        self.send_ok_event();
 
         info!("Client/Server setup: server receiver is {:?}", client_tok);
     }
@@ -186,12 +188,20 @@ impl Session {
         self.clients.get_mut(tok)
     }
 
+    fn on_client_ready(&mut self, event_loop: &mut mio::EventLoop<Session>, tok: mio::Token, events: mio::EventSet) {
+        self.get_client(&tok).map(|c| c.ready(event_loop, events));
+    }
+
     fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
         let sender_tok = mio::Token(2);
 
         self.get_client(&sender_tok).map(|c| c.send(event_loop, msg));
+    }
 
-        self.send_ok_event();
+    fn recv(&mut self, event_loop: &mut mio::EventLoop<Session>) {
+        let receiver_tok = mio::Token(3);
+
+        self.get_client(&receiver_tok).map(|c| c.recv(event_loop));
     }
 }
 
@@ -206,13 +216,9 @@ impl mio::Handler for Session {
             return self.on_server_ready(event_loop, tok, events);
         }
 
-        /*if let Some(server) = self.servers.get_mut(&tok) {
-            return server.ready(event_loop, events);
+        if self.clients.contains_key(&tok) {
+            return self.on_client_ready(event_loop, tok, events);
         }
-
-        if let Some(client) = self.clients.get_mut(&tok) {
-            return client.ready(event_loop, events);
-        }*/
     }
     fn notify(&mut self, event_loop: &mut mio::EventLoop<Session>, cmd: Command) {
         match cmd {
@@ -220,7 +226,7 @@ impl mio::Handler for Session {
             Command::Connect(addr) => self.connect(event_loop, addr),
             Command::Listen(addr)  => self.listen(event_loop, addr),
             Command::Send(msg)     => self.send(event_loop, msg),
-            _ => {}
+            Command::Recv          => self.recv(event_loop)
         }
     }
 }
@@ -249,43 +255,31 @@ impl Server {
 }
 
 impl Client {
-    fn new(tok: mio::Token, addr: &SocketAddr) -> Client {
+    fn new(tok: mio::Token, addr: &SocketAddr, evt_tx: mpsc::Sender<io::Result<()>>) -> Client {
         Client {
-            stream: ProtoStream::new(tok, addr)
+            token: tok,
+            stream: mio::tcp::TcpStream::connect(addr).unwrap(),
+            evt_sender: evt_tx,
+            state: ClientState::Initial
         }
     }
 
-    fn accepted(tok: mio::Token, stream: mio::tcp::TcpStream) -> Client {
+    fn accepted(tok: mio::Token, stream: mio::tcp::TcpStream, evt_tx: mpsc::Sender<io::Result<()>>) -> Client {
         Client {
-            stream: ProtoStream::accepted(tok, stream)
-        }
-    }
-
-    fn register(&self, event_loop: &mut mio::EventLoop<Session>) {
-        self.stream.register(event_loop);
-    }
-
-    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
-    }
-
-    fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
-        self.stream.send(event_loop, msg);
-    }
-}
-
-impl ProtoStream {
-    fn new(tok: mio::Token, addr: &SocketAddr) -> ProtoStream {
-        ProtoStream {
             token: tok,
-            stream: mio::tcp::TcpStream::connect(addr).unwrap()
+            stream: stream,
+            evt_sender: evt_tx,
+            state: ClientState::Initial
         }
     }
 
-    fn accepted(tok: mio::Token, stream: mio::tcp::TcpStream) -> ProtoStream {
-        ProtoStream {
-            token: tok,
-            stream: stream
-        }
+    fn send_event(&mut self, evt: io::Result<()>) {
+        let _ = self.evt_sender.send(evt);
+    }
+
+    fn send_ok_event(&mut self) {
+        let evt = Ok(());
+        self.send_event(evt);
     }
 
     fn register(&self, event_loop: &mut mio::EventLoop<Session>) {
@@ -302,15 +296,69 @@ impl ProtoStream {
         event_loop.reregister(&self.stream, self.token, interest, poll_opt).unwrap();
     }
 
+    fn change_state(&mut self, new_state: ClientState) {
+        info!("Client {:?} switched from {:?} to {:?}", self.token, self.state, new_state);
+        self.state = new_state;
+    }
+
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<Session>, events: mio::EventSet) {
+        info!("Client::ready {:?} {:?}", self.token, events);
+
+        if events.is_readable() {
+            if self.state == ClientState::Receiving {
+                self.try_recv(event_loop);
+            } else{
+                self.change_state(ClientState::Readable);
+            }
+        } else {
+            self.change_state(ClientState::NotReadable);
+        }
+    }
+
     fn send(&mut self, event_loop: &mut mio::EventLoop<Session>, msg: Vec<u8>) {
         match self.stream.try_write(&msg) {
-            Ok(Some(0))     => info!("send: wrote {} bytes", 0),
+            Ok(Some(0))     => panic!("send: wrote ZERO bytes"),
             Ok(Some(count)) => info!("send: wrote {} bytes", count),
-            Ok(None)        => info!("send: would block"),
-            Err(e)          => info!("send: failed {:?}", e)
+            Ok(None)        => panic!("send: would block"),
+            Err(e)          => panic!("send: failed {:?}", e)
         }
 
         self.reregister(event_loop);
+        self.send_ok_event();
+    }
+
+    fn recv(&mut self, event_loop: &mut mio::EventLoop<Session>) {
+        info!("Client::recv {:?}", self.token);
+
+        match self.state {
+            ClientState::Initial     => self.change_state(ClientState::Receiving),
+            ClientState::NotReadable => self.change_state(ClientState::Receiving),
+            ClientState::Readable    => self.try_recv(event_loop),
+            ClientState::Receiving   => panic!("cannot recv while already receiving"),
+        }
+    }
+
+    fn try_recv(&mut self, event_loop: &mut mio::EventLoop<Session>) {
+        info!("Client::try_recv {:?}", self.token);
+        let mut msg = vec![0; 11];
+        match self.stream.try_read(&mut msg) {
+            Ok(Some(11)) => {
+                self.change_state(ClientState::Initial);
+                self.reregister(event_loop);
+                self.send_ok_event();
+                info!("Client {:?} has received a msg", self.token);
+            },
+            Ok(Some(x)) => {
+                panic!("Client {:?} has received {} bytes", self.token, x);
+            },
+            Ok(None) => {
+                self.change_state(ClientState::Receiving);
+                info!("Client {:?} was readable but is now receiving", self.token);
+            },
+            Err(e) => {
+                panic!("Client {:?} failed to read {:?}", self.token, e);
+            }
+        }
     }
 }
 
@@ -356,6 +404,11 @@ mod test {
 
         ctrl.send(vec![66; 11]).unwrap();
         ctrl.send(vec![66; 11]).unwrap();
+
+        sleep_ms(50); // wait, just like that
+
+        ctrl.recv().unwrap();
+        ctrl.recv().unwrap();
 
         drop(ctrl);
         el_thread.join().unwrap();
