@@ -9,4 +9,4 @@ build_script:
   - cargo build
 
 test_script:
-  - SET RUST_LOG=mio,mio_win_inv,test & SET RUST_TEST_THREADS=1& cargo test --verbose
+  - SET RUST_LOG=mio_win_inv,test & SET RUST_TEST_THREADS=1& cargo test --verbose
