@@ -404,9 +404,11 @@ mod test {
 
         ctrl.send(vec![66; 11]).unwrap();
         ctrl.send(vec![66; 11]).unwrap();
+        ctrl.send(vec![66; 11]).unwrap();
 
         sleep_ms(50); // wait, just like that
 
+        ctrl.recv().unwrap();
         ctrl.recv().unwrap();
         ctrl.recv().unwrap();
 
