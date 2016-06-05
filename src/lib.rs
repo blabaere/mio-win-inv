@@ -428,4 +428,25 @@ mod test {
             Err(e) => error!("event loop failed to run: {}", e)
         }
     }
+
+    #[test]
+    fn what_happens_when_binding_twice_on_the_sameport_with_mio() {
+        let addr = "127.0.0.1:5455".parse().unwrap();
+        let listener1 = mio::tcp::TcpListener::bind(&addr);
+        assert!(listener1.is_ok());
+
+        sleep_ms(500);
+        let listener2 = mio::tcp::TcpListener::bind(&addr);
+        assert!(listener2.is_err());
+    }
+
+    #[test]
+    fn what_happens_when_binding_twice_on_the_sameport_with_std() {
+        let listener1 = ::std::net::TcpListener::bind("127.0.0.1:5456");
+        assert!(listener1.is_ok());
+
+        sleep_ms(500);
+        let listener2 = ::std::net::TcpListener::bind("127.0.0.1:5456");
+        assert!(listener2.is_err());
+    }
 }
