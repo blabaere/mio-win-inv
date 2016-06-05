@@ -385,7 +385,7 @@ mod test {
         thread::sleep(time::Duration::from_millis(millis))
     }
 
-    #[test]
+    //#[test]
     fn it_works() {
         let _ = env_logger::init();
         info!("Logging initialized");
