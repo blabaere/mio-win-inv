@@ -19,7 +19,7 @@ env_logger = "0.3.2"
 byteorder = "0.4.2"
 
 # this one is for mio 0.6.1
-mio = "0.6.1"
+#mio = "0.6.1"
 
 # this one is for mio 0.6.0
-#mio = { git = "https://github.com/carllerche/mio", rev = "19d2d2a217199e23766e418dc6527ca509dcab34" }
+mio = { git = "https://github.com/carllerche/mio", rev = "19d2d2a217199e23766e418dc6527ca509dcab34" }
