@@ -246,6 +246,8 @@ mod test {
         let (server, name) = super::server(1);
         t!(poll.register(&server, Token(0), Ready::writable(), PollOpt::edge()));
 
+        t!(server.connect());
+
         let client = super::client(&name);
         t!(poll.register(&client, Token(1), Ready::writable(), PollOpt::edge()));
 
