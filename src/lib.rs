@@ -258,7 +258,7 @@ mod test {
 
             let raised_events = events.iter().collect::<Vec<_>>();
             debug!("events {:?}", raised_events);
-            if raised_events.iter().any(|e| { e.token() == Token(0) && e.is_writable() }) {
+            if raised_events.iter().any(|e| { e.token() == Token(0) && e.kind().is_writable() }) {
                 break;
             }
         }
