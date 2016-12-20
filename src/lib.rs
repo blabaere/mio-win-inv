@@ -207,6 +207,7 @@ mod test {
     use env_logger;
 
     use mio::*;
+    use std::time::Duration;
 
     #[test]
     fn what_happens_when_binding_twice_on_the_sameport_with_mio() {
@@ -242,14 +243,14 @@ mod test {
         let _ = env_logger::init();
         let poll = t!(Poll::new());
 
-        let (server, name) = server(1);
+        let (server, name) = super::server(1);
         t!(poll.register(&server, Token(0), Ready::writable(), PollOpt::edge()));
 
-        let client = client(&name);
+        let client = super::client(&name);
         t!(poll.register(&client, Token(1), Ready::writable(), PollOpt::edge()));
 
         let mut events = Events::with_capacity(128);
-        t!(poll.poll(&mut events, Some(time::Duration::from_millis(2000))));
+        t!(poll.poll(&mut events, Some(Duration::from_millis(2000))));
 
         let raised_events = events.iter().collect::<Vec<_>>();
         debug!("events {:?}", raised_events);
