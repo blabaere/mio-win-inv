@@ -246,21 +246,21 @@ mod test {
         let (server, name) = super::server(1);
         t!(poll.register(&server, Token(0), Ready::writable(), PollOpt::edge()));
 
-        t!(server.connect());
+        let _ = server.connect();
 
         let client = super::client(&name);
         t!(poll.register(&client, Token(1), Ready::writable(), PollOpt::edge()));
 
         let mut events = Events::with_capacity(128);
-        t!(poll.poll(&mut events, Some(Duration::from_millis(2000))));
 
-        let raised_events = events.iter().collect::<Vec<_>>();
-        debug!("events {:?}", raised_events);
-        assert!(raised_events.iter().any(|e| {
-            e.token() == Token(0) && e.kind() == Ready::writable()
-        }), "Server named pipe should have been seen as writable !");
-        assert!(raised_events.iter().any(|e| {
-            e.token() == Token(1) && e.kind() == Ready::writable()
-        }), "Client named pipe should have been seen as writable !");
-    }
+        loop {
+            t!(poll.poll(&mut events, None));
+
+            let raised_events = events.iter().collect::<Vec<_>>();
+            debug!("events {:?}", raised_events);
+            if raised_events.iter().any(|e| { e.token() == Token(0) && e.is_writable() }) {
+                break;
+            }
+        }
+   }
 }
