@@ -2,6 +2,8 @@
 extern crate log;
 extern crate env_logger;
 extern crate mio;
+extern crate mio_named_pipes;
+extern crate winapi;
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -11,6 +13,12 @@ use std::io::{Write, Read};
 
 use mio::*;
 use mio::tcp::*;
+
+use std::fs::OpenOptions;
+use std::io::prelude::*;
+use std::os::windows::fs::*;
+use std::os::windows::io::*;
+use std::time::Duration;
 
 fn localhost() -> SocketAddr {
     FromStr::from_str("127.0.0.1:18080").unwrap()
@@ -169,6 +177,30 @@ pub fn scenario() {
     }
 }
 
+macro_rules! t {
+    ($e:expr) => (match $e {
+        Ok(e) => e,
+        Err(e) => panic!("{} failed with {}", stringify!($e), e),
+    })
+}
+
+fn server(id: usize) -> (NamedPipe, String) {
+    let name = format!(r"\\.\pipe\my-pipe-{}", id);
+    let pipe = t!(NamedPipe::new(&name));
+    (pipe, name)
+}
+
+fn client(name: &str) -> NamedPipe {
+    let mut opts = OpenOptions::new();
+    opts.read(true)
+        .write(true)
+        .custom_flags(winapi::FILE_FLAG_OVERLAPPED);
+    let file = t!(opts.open(name));
+    unsafe {
+        NamedPipe::from_raw_handle(file.into_raw_handle())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use env_logger;
@@ -196,11 +228,35 @@ mod test {
         assert!(listener2.is_err());
     }
 
-    #[test]
+    //#[test]
     fn spurious_readable_with_mio_061_but_not_with_060() {
         let _ = env_logger::init();
         info!("Logger initialized");
 
         super::scenario();
+    }
+
+    #[test]
+    fn when_registering_named_pipe_server_writable_is_polled() {
+        let _ = env_logger::init();
+        let poll = t!(Poll::new());
+
+        let (server, name) = server(1);
+        t!(poll.register(&server, Token(0), Ready::writable(), PollOpt::edge()));
+
+        let client = client(&name);
+        t!(poll.register(&client, Token(1), Ready::writable(), PollOpt::edge()));
+
+        let mut events = Events::with_capacity(128);
+        t!(poll.poll(&mut events, Some(Duration::from_millis(2000))));
+
+        let raised_events = events.iter().collect::<Vec<_>>();
+        debug!("events {:?}", raised_events);
+        assert!(raised_events.iter().any(|e| {
+            e.token() == Token(0) && e.kind() == Ready::writable()
+        }), "Server named pipe should have been seen as writable !");
+        assert!(raised_events.iter().any(|e| {
+            e.token() == Token(1) && e.kind() == Ready::writable()
+        }), "Client named pipe should have been seen as writable !");
     }
 }
