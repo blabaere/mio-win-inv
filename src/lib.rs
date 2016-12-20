@@ -2,8 +2,9 @@
 extern crate log;
 extern crate env_logger;
 extern crate mio;
-extern crate mio_named_pipes;
-extern crate winapi;
+
+#[cfg(windows)] extern crate mio_named_pipes;
+#[cfg(windows)] extern crate winapi;
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -13,12 +14,12 @@ use std::io::{Write, Read};
 
 use mio::*;
 use mio::tcp::*;
+use mio_named_pipes::NamedPipe;
 
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::os::windows::fs::*;
-use std::os::windows::io::*;
-use std::time::Duration;
+#[cfg(windows)] use std::os::windows::fs::*;
+#[cfg(windows)] use std::os::windows::io::*;
 
 fn localhost() -> SocketAddr {
     FromStr::from_str("127.0.0.1:18080").unwrap()
@@ -248,7 +249,7 @@ mod test {
         t!(poll.register(&client, Token(1), Ready::writable(), PollOpt::edge()));
 
         let mut events = Events::with_capacity(128);
-        t!(poll.poll(&mut events, Some(Duration::from_millis(2000))));
+        t!(poll.poll(&mut events, Some(time::Duration::from_millis(2000))));
 
         let raised_events = events.iter().collect::<Vec<_>>();
         debug!("events {:?}", raised_events);
