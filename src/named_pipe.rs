@@ -46,7 +46,7 @@ impl TestStream {
     fn new_server() -> TestStream {
         TestStream {
             token: SERVER_STREAM,
-            stream: NamedPipe::new(r"\\.\pipe\test-pipe").unwrap(),
+            named_pipe: NamedPipe::new(r"\\.\pipe\test-pipe").unwrap(),
             state: StreamState::Initial
         }
     }
@@ -72,7 +72,7 @@ impl TestStream {
     }
 
     fn start(&mut self, poll: &Poll) {
-        poll.register(&self.stream, self.token, Ready::writable(), PollOpt::level()).unwrap();
+        poll.register(&self.named_pipe, self.token, Ready::writable(), PollOpt::level()).unwrap();
         if self.token == SERVER_STREAM {
             let _ = self.named_pipe.connect();
         }
@@ -85,18 +85,18 @@ impl TestStream {
                 assert!(evt.is_writable());
                 assert!(!evt.is_readable());
                 let buffer: [u8; 8] = [6; 8];
-                let written = self.stream.write(&buffer).unwrap();
+                let written = self.named_pipe.write(&buffer).unwrap();
                 assert_eq!(8, written);
-                poll.reregister(&self.stream, self.token, Ready::readable(), PollOpt::level()).unwrap();
+                poll.reregister(&self.named_pipe, self.token, Ready::readable(), PollOpt::level()).unwrap();
                 self.change_state(StreamState::HandshakeRx);
             },
             StreamState::HandshakeRx => {
                 assert!(!evt.is_writable());
                 assert!(evt.is_readable());
                 let mut buffer: [u8; 8] = [0; 8];
-                let read = self.stream.read(&mut buffer).unwrap();
+                let read = self.named_pipe.read(&mut buffer).unwrap();
                 assert_eq!(8, read);
-                poll.reregister(&self.stream, self.token, Ready::all(), PollOpt::edge()).unwrap();
+                poll.reregister(&self.named_pipe, self.token, Ready::all(), PollOpt::edge()).unwrap();
                 self.change_state(StreamState::Active);
             },
             StreamState::Active => {
