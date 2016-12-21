@@ -22,5 +22,5 @@ mio = "0.6.2"
 [target.'cfg(windows)'.dependencies]
 miow = "0.1.5"
 #mio-named-pipes = "0.1.1"
-mio-named-pipes = { git="https://github.com/alexcrichton/mio-named-pipes", rev="a29c38f2f012b6a811248169605d35d34ea55afd" }
+mio-named-pipes = { git="https://github.com/alexcrichton/mio-named-pipes", rev="28e7b3b5240ed2261759b74aa27bce1fd878d76b" }
 winapi = "0.2.8"
