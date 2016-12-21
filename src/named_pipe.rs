@@ -115,7 +115,7 @@ pub fn scenario() {
     let poll = Poll::new().unwrap();
     let mut events = Events::with_capacity(1024);
 
-    let server = TestStream::new_server();
+    let mut server = TestStream::new_server();
     server.start(&poll);
 
     sleep_ms(100);
