@@ -8,4 +8,4 @@ extern crate mio;
 
 pub mod tcp;
 #[cfg(windows)]
-pub mod named_pipes;
+pub mod named_pipe;
