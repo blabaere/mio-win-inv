@@ -6,6 +6,7 @@ use std::io::{Write, Read};
 use mio::*;
 use mio::tcp::*;
 use mio_named_pipes::NamedPipe;
+use winapi;
 
 use std::fs::OpenOptions;
 use std::io::prelude::*;
@@ -143,6 +144,23 @@ pub fn scenario() {
                 return;
             }
         }
+    }
+}
+
+fn server(id: usize) -> (NamedPipe, String) {
+    let name = format!(r"\\.\pipe\my-pipe-{}", id);
+    let pipe = t!(NamedPipe::new(&name));
+    (pipe, name)
+}
+
+fn client(name: &str) -> NamedPipe {
+    let mut opts = OpenOptions::new();
+    opts.read(true)
+        .write(true)
+        .custom_flags(winapi::FILE_FLAG_OVERLAPPED);
+    let file = t!(opts.open(name));
+    unsafe {
+        NamedPipe::from_raw_handle(file.into_raw_handle())
     }
 }
 
