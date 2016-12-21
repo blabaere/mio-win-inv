@@ -1,15 +1,12 @@
-use std::str::FromStr;
 use std::thread;
 use std::time;
 use std::io::{Write, Read};
 
 use mio::*;
-use mio::tcp::*;
 use mio_named_pipes::NamedPipe;
 use winapi;
 
 use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::os::windows::fs::*;
 use std::os::windows::io::*;
 
@@ -169,7 +166,6 @@ mod test {
     use env_logger;
 
     use mio::*;
-    use std::time::Duration;
 
     #[test]
     fn client_named_pipe_should_become_readable() {
