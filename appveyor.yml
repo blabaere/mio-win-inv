@@ -1,12 +1,20 @@
-install:
-  - ps: Start-FileDownload 'https://static.rust-lang.org/dist/rust-nightly-i686-pc-windows-gnu.exe'
-  - rust-nightly-i686-pc-windows-gnu.exe /VERYSILENT /NORESTART /DIR="C:\Program Files (x86)\Rust"
-  - SET PATH=%PATH%;C:\Program Files (x86)\Rust\bin
-  - rustc -V
-  - cargo -V
+environment:
+  RUST_TEST_THREADS: 1
+  RUST_BACKTRACE: 1
+  RUST_LOG: mio,mio_win_inv,test
+  matrix:
+  - TARGET: x86_64-pc-windows-msvc
+  - TARGET: i686-pc-windows-msvc
 
-build_script:
-  - cargo build
+install:
+  - ps: Start-FileDownload "https://static.rust-lang.org/dist/rust-nightly-${env:TARGET}.exe"
+  - rust-nightly-%TARGET%.exe /VERYSILENT /NORESTART /DIR="C:\Program Files (x86)\Rust"
+  - SET PATH=%PATH%;C:\Program Files (x86)\Rust\bin
+  - SET PATH=%PATH%;C:\MinGW\bin
+  - rustc -vV
+  - cargo -vV
+
+build: false
 
 test_script:
-  - SET RUST_LOG=mio=trace,mio_win_inv,test & SET RUST_TEST_THREADS=1& cargo test --verbose
+  - cargo test --target %TARGET%
