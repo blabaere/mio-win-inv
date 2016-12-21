@@ -192,7 +192,7 @@ mod test {
         assert!(listener2.is_err());
     }
 
-    #[test]
+    //#[test]
     fn spurious_readable_with_mio_061_but_not_with_060() {
         let _ = env_logger::init();
         info!("Logger initialized");

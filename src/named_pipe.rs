@@ -170,6 +170,7 @@ mod test {
     #[test]
     fn client_named_pipe_should_become_readable() {
         let _ = env_logger::init();
+        
         info!("Logger initialized");
 
         super::scenario();
